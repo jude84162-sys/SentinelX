@@ -119,11 +119,36 @@ termux-battery-status
 
 Then install the Termux:API companion app from F-Droid and grant all permissions (SMS, Calls, Contacts, Location, Storage, Camera, Microphone, Notifications).
 
+**Then install the Termux:API companion app from [F-Droid](https://f-droid.org/packages/com.termux.api/) and grant all permissions** (SMS, Calls, Contacts, Location, Storage, Camera, Microphone, Notifications).
+
+---
+
+## 🚀 Usage
 ---
 
 🚀 Usage
 
 Show Environment Info
+# Show environment info(docker)
+docker run --rm jude84162/sentinelx --env
+
+# Process analysis only
+docker run --rm jude84162/sentinelx --process
+
+# Network analysis
+docker run --rm jude84162/sentinelx --network
+
+# File system triage
+docker run --rm jude84162/sentinelx --files
+
+# Persistence detection
+docker run --rm jude84162/sentinelx --persistence
+
+# Phone OSINT
+docker run --rm jude84162/sentinelx --phone +963912345678
+
+# Persist reports to host
+docker run --rm -v $(pwd)/outputs:/app/outputs jude84162/sentinelx --triage-all
 
 ```bash
 python SentinelX.py --env
