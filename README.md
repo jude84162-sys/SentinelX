@@ -1,12 +1,4 @@
 
-```bash
-cd ~/SentinelX
-nano README.md
-```
-
-Paste the following:
-
-```markdown
 <div align="center">
 
 # 🛡️ SentinelX
