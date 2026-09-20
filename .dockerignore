@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# Outputs (regenerate inside container)
+outputs/*.json
+outputs/*.html
+outputs/adb_results/
+
+# Docs
+*.md
+LICENSE
+
+# Misc
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

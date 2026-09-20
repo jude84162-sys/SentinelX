@@ -1,10 +1,11 @@
 # modules/phone_osint.py
 """
-SentinelX - Phone Number OSINT (Desktop)
+SentinelX - Phone Number OSINT (Desktop + Android)
 Analyzes international phone numbers for:
 - Country, region, carrier, timezone, line type
-- Reputation (spam/fraud lists, public leaks)
-- Pattern anomalies (premium rate, disposable, VoIP)
+- Risk scoring (premium rate, VoIP, high-risk countries)
+- Reputation (public APIs — optional)
+
 Requires: phonenumbers package  ->  pip install phonenumbers
 """
 
@@ -15,24 +16,25 @@ from datetime import datetime
 
 logger = logging.getLogger("SentinelX.phone_osint")
 
-# Optional import — graceful if missing
 try:
     import phonenumbers
-    from phonenumbers import geocoder, carrier, timezone, number_type, PhoneNumberType
+    from phonenumbers import geocoder, carrier, timezone, number_type
     HAS_PHONENUMBERS = True
 except ImportError:
     HAS_PHONENUMBERS = False
 
 
-# Known premium / fraud prefixes
+# ============================================================
+# Configuration
+# ============================================================
+
 PREMIUM_PREFIXES = [
-    "+1900", "+1800",  # US premium
-    "+449", "+44871", "+44870",  # UK premium
-    "+881", "+882", "+883",  # Satellite
-    "+870",  # Inmarsat
+    "+1900", "+1800",           # US premium / toll
+    "+449", "+44871", "+44870", # UK premium
+    "+881", "+882", "+883",     # Satellite
+    "+870",                     # Inmarsat
 ]
 
-# Known fraud-prone country codes (high abuse rate)
 HIGH_RISK_COUNTRIES = {
     "NG": "Nigeria — high fraud rate",
     "PK": "Pakistan — spoofing reports",
@@ -42,7 +44,36 @@ HIGH_RISK_COUNTRIES = {
     "IN": "India — tech support scams",
 }
 
-# Number type classifications
+# Regions with incomplete carrier/type metadata (avoid false positives)
+LIMITED_METADATA_REGIONS = {
+    "SY", "IQ", "YE", "LY", "SD", "SO", "AF", "MM", "KP",
+}
+
+# Regions with fully reliable metadata
+RELIABLE_METADATA_REGIONS = {
+    "US", "CA", "GB", "DE", "FR", "IT", "ES", "NL", "BE",
+    "CH", "AT", "SE", "NO", "DK", "FI", "JP", "KR", "AU",
+    "NZ", "BR", "MX", "AR", "PL", "CZ", "PT", "IE",
+}
+
+# Human-readable region names (fallback map)
+REGION_NAMES = {
+    "US": "United States", "GB": "United Kingdom", "CA": "Canada",
+    "AU": "Australia", "DE": "Germany", "FR": "France",
+    "IT": "Italy", "ES": "Spain", "NL": "Netherlands",
+    "BE": "Belgium", "CH": "Switzerland", "AT": "Austria",
+    "SE": "Sweden", "NO": "Norway", "DK": "Denmark",
+    "FI": "Finland", "JP": "Japan", "KR": "South Korea",
+    "CN": "China", "IN": "India", "PK": "Pakistan",
+    "RU": "Russia", "BR": "Brazil", "MX": "Mexico",
+    "AR": "Argentina", "SY": "Syria", "SA": "Saudi Arabia",
+    "AE": "UAE", "EG": "Egypt", "JO": "Jordan",
+    "LB": "Lebanon", "IQ": "Iraq", "TR": "Turkey",
+    "IR": "Iran", "IL": "Israel", "MA": "Morocco",
+    "DZ": "Algeria", "TN": "Tunisia", "LY": "Libya",
+}
+
+# Number type labels
 TYPE_LABELS = {
     0: "FIXED_LINE",
     1: "MOBILE",
@@ -64,31 +95,33 @@ TYPE_RISK = {
     "VOIP": 25,
     "PERSONAL_NUMBER": 20,
     "PAGER": 15,
-    "UNKNOWN": 10,
     "TOLL_FREE": 5,
+    # UNKNOWN is NOT scored (incomplete metadata)
 }
 
 
+# ============================================================
+# Parsing
+# ============================================================
+
 def _normalize(raw):
-    """Try to parse and normalize a phone number string."""
+    """Parse and normalize a phone number string."""
     if not HAS_PHONENUMBERS:
         return None, "phonenumbers library not installed. Run: pip install phonenumbers"
 
-    raw = raw.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    raw = raw.strip().replace(" ", "").replace("-", "")
+    raw = raw.replace("(", "").replace(")", "")
 
-    # Must start with +
     if not raw.startswith("+"):
-        return None, "Number must start with + (international format), e.g. +963912345678"
+        return None, "Number must start with + (e.g., +963912345678)"
 
     try:
         parsed = phonenumbers.parse(raw, None)
     except phonenumbers.NumberParseException as e:
         return None, f"Invalid number: {e}"
 
-    if not phonenumbers.is_valid_number(parsed):
-        # Still return — could be a valid-format-but-unassigned number
-        if not phonenumbers.is_possible_number(parsed):
-            return None, "Number is not even possible for the region"
+    if not phonenumbers.is_possible_number(parsed):
+        return None, "Number is not possible for any region"
 
     return parsed, None
 
@@ -105,41 +138,91 @@ def _format_national(parsed):
     return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL)
 
 
+# ============================================================
+# Info extraction
+# ============================================================
+
 def _get_country_info(parsed):
-    region = phonenumbers.region_code_for_number(parsed) or "??"
-    country = geocoder.country_name_for_number(parsed, "en") or "Unknown"
-    description = geocoder.description_for_number(parsed, "en") or ""
-    return {
-        "region_code": region,
-        "country": country,
-        "location": description
-    }
+    """Get country info with fallbacks."""
+    try:
+        region = phonenumbers.region_code_for_number(parsed) or "??"
+
+        country = ""
+        try:
+            country = geocoder.country_name_for_number(parsed, "en") or ""
+        except Exception:
+            pass
+
+        if not country or country == "Unknown":
+            country = REGION_NAMES.get(region, region if region != "??" else "Unknown")
+
+        description = ""
+        try:
+            description = geocoder.description_for_number(parsed, "en") or ""
+        except Exception:
+            pass
+
+        return {
+            "region_code": region,
+            "country": country or "Unknown",
+            "location": description or country or "",
+        }
+    except Exception as e:
+        logger.debug(f"Country info failed: {e}")
+        return {"region_code": "??", "country": "Unknown", "location": ""}
 
 
 def _get_carrier(parsed):
-    name = carrier.name_for_number(parsed, "en") or "Unknown"
-    return {"name": name, "is_voip": False}
+    """Get carrier name."""
+    try:
+        name = carrier.name_for_number(parsed, "en") or "Unknown"
+    except Exception:
+        name = "Unknown"
+    return {"name": name}
 
 
 def _get_timezones(parsed):
-    return list(timezone.time_zones_for_number(parsed)) or ["Unknown"]
+    """Get timezones, filtering placeholders."""
+    try:
+        zones = list(timezone.time_zones_for_number(parsed))
+        zones = [z for z in zones if z and z not in ("Etc/Unknown", "Etc/GMT")]
+        if zones:
+            return zones
+    except Exception:
+        pass
+    return ["Unknown"]
 
 
 def _get_number_type(parsed):
-    t = number_type(parsed)
+    """Get number type label."""
+    try:
+        t = number_type(parsed)
+    except Exception:
+        t = 27  # UNKNOWN
     label = TYPE_LABELS.get(t, "UNKNOWN")
     return {"code": t, "type": label}
 
 
+# ============================================================
+# Risk analysis
+# ============================================================
+
 def _analyze_risks(parsed, formatted_e164, country_info, number_type_info):
-    """Compute risk score and reason list."""
+    """
+    Compute risk score and reason list.
+    Handles regions with incomplete metadata (e.g., Syria) gracefully.
+    """
     risks = []
     score = 0
 
-    # 1. Number type risks
-    t = number_type_info["type"]
+    region = country_info.get("region_code", "??")
+    t = number_type_info.get("type", "UNKNOWN")
+
+    # 1. Number type risk (skip UNKNOWN — incomplete data)
+    type_already_scored = False
     if t in TYPE_RISK:
         score += TYPE_RISK[t]
+        type_already_scored = True
         risks.append({
             "severity": "HIGH" if TYPE_RISK[t] >= 40 else "MEDIUM",
             "type": f"number_type_{t.lower()}",
@@ -147,9 +230,11 @@ def _analyze_risks(parsed, formatted_e164, country_info, number_type_info):
         })
 
     # 2. Premium rate prefixes
+    #    Skip score accumulation if type already flagged it (PREMIUM_RATE)
     for prefix in PREMIUM_PREFIXES:
         if formatted_e164.startswith(prefix):
-            score += 50
+            if not type_already_scored:
+                score += 50
             risks.append({
                 "severity": "HIGH",
                 "type": "premium_rate",
@@ -158,7 +243,6 @@ def _analyze_risks(parsed, formatted_e164, country_info, number_type_info):
             break
 
     # 3. High-risk country
-    region = country_info.get("region_code")
     if region in HIGH_RISK_COUNTRIES:
         score += 15
         risks.append({
@@ -168,21 +252,32 @@ def _analyze_risks(parsed, formatted_e164, country_info, number_type_info):
         })
 
     # 4. VoIP detection (carrier name hints)
-    carrier_name = (carrier.name_for_number(parsed, "en") or "").lower()
-    voip_keywords = ["google", "twilio", "vonage", "skype", "bandwidth",
-                     "plivo", "nexmo", "voice", "voip", "textnow", "textfree"]
+    try:
+        carrier_name = (carrier.name_for_number(parsed, "en") or "").lower()
+    except Exception:
+        carrier_name = ""
+
+    voip_keywords = [
+        "google", "twilio", "vonage", "skype", "bandwidth",
+        "plivo", "nexmo", "textnow", "textfree", "voip",
+    ]
     for kw in voip_keywords:
         if kw in carrier_name:
             score += 20
             risks.append({
                 "severity": "MEDIUM",
                 "type": "voip_carrier",
-                "detail": f"VoIP carrier detected: {carrier.name_for_number(parsed, 'en')}"
+                "detail": f"VoIP carrier: {carrier_name}"
             })
             break
 
-    # 5. Unassigned but valid format
-    if not phonenumbers.is_valid_number(parsed):
+    # 5. Unassigned number — only if region has complete metadata
+    try:
+        is_valid = phonenumbers.is_valid_number(parsed)
+    except Exception:
+        is_valid = True
+
+    if not is_valid and region in RELIABLE_METADATA_REGIONS:
         score += 10
         risks.append({
             "severity": "LOW",
@@ -190,6 +285,7 @@ def _analyze_risks(parsed, formatted_e164, country_info, number_type_info):
             "detail": "Number format is valid but not currently assigned"
         })
 
+    # Determine level
     if score >= 50:
         level = "CRITICAL"
     elif score >= 30:
@@ -199,40 +295,45 @@ def _analyze_risks(parsed, formatted_e164, country_info, number_type_info):
     else:
         level = "LOW"
 
+    metadata_limited = (
+        t == "UNKNOWN" and region in LIMITED_METADATA_REGIONS
+    )
+
     return {
         "score": score,
         "level": level,
-        "risks": risks
+        "risks": risks,
+        "metadata_limited": metadata_limited,
     }
 
 
-def _reputation_stub(formatted_e164):
-    """
-    Placeholder for reputation checks.
-    Real integrations would call:
-      - Truecaller API (requires key)
-      - numlookupapi.com (requires key)
-      - Twilio Lookup (requires key)
-      - Have I Been Pwned (phone leaks)
-    Without keys, we return 'unchecked'.
-    """
+# ============================================================
+# Reputation (stub — optional APIs)
+# ============================================================
+
+def _reputation_stub(formatted_e164, region):
+    """Placeholder for reputation checks."""
+    region_lower = (region or "").lower()
     return {
         "checked": False,
-        "reason": "External reputation APIs require API keys (Truecaller, Twilio, HIBP). "
+        "reason": "External reputation APIs require API keys. "
                   "Set SENTINELX_TRUE_CALLER_KEY env var to enable.",
         "suggestions": [
-            f"Search Google: \"{formatted_e164}\"",
-            f"Search Truecaller: https://www.truecaller.com/search/{{region}}/{formatted_e164.lstrip('+')}",
+            f'Search Google: "{formatted_e164}"',
+            f"Search Truecaller: https://www.truecaller.com/search/"
+            f"{region_lower}/{formatted_e164.lstrip('+')}",
             f"Search Have I Been Pwned: https://haveibeenpwned.com/",
             f"Search WhatsApp: https://wa.me/{formatted_e164.lstrip('+')}",
         ]
     }
 
 
+# ============================================================
+# Main entry
+# ============================================================
+
 def analyze_phone_number(raw_number):
-    """
-    Main entry point. Returns a dict with full analysis.
-    """
+    """Main entry point. Returns dict with full analysis."""
     result = {
         "timestamp": datetime.now().isoformat(),
         "input": raw_number,
@@ -245,7 +346,7 @@ def analyze_phone_number(raw_number):
         "number_type": {},
         "risk": {},
         "reputation": {},
-        "summary": {}
+        "summary": {},
     }
 
     parsed, error = _normalize(raw_number)
@@ -269,9 +370,12 @@ def analyze_phone_number(raw_number):
         parsed,
         result["formats"]["e164"],
         result["country"],
-        result["number_type"]
+        result["number_type"],
     )
-    result["reputation"] = _reputation_stub(result["formats"]["e164"])
+    result["reputation"] = _reputation_stub(
+        result["formats"]["e164"],
+        result["country"].get("region_code", ""),
+    )
 
     result["summary"] = {
         "e164": result["formats"]["e164"],
@@ -285,6 +389,10 @@ def analyze_phone_number(raw_number):
 
     return result
 
+
+# ============================================================
+# Report printer
+# ============================================================
 
 def print_phone_report(result):
     print("\n" + "=" * 70)
@@ -303,17 +411,27 @@ def print_phone_report(result):
     print(f"[*] Type:       {s['type']}")
     print(f"[*] Risk:       {s['risk_level']} (score {s['risk_score']})")
 
+    # Formats
     print(f"\n[*] Formats:")
     for k, v in result["formats"].items():
         print(f"    {k:16} : {v}")
 
+    # Country
     print(f"\n[*] Country info:")
     print(f"    Region:     {result['country'].get('region_code')}")
     print(f"    Country:    {result['country'].get('country')}")
-    print(f"    Location:   {result['country'].get('location', '(not available)')}")
+    loc = result['country'].get('location', '')
+    if loc:
+        print(f"    Location:   {loc}")
 
-    print(f"\n[*] Timezone(s): {', '.join(result['timezones'])}")
+    # Timezones — truncated
+    tz = result.get("timezones", ["Unknown"])
+    if len(tz) > 3:
+        print(f"\n[*] Timezone(s): {', '.join(tz[:3])} (+{len(tz) - 3} more)")
+    else:
+        print(f"\n[*] Timezone(s): {', '.join(tz)}")
 
+    # Risks
     risks = result["risk"].get("risks", [])
     if risks:
         print(f"\n[!] Risk Indicators:")
@@ -322,23 +440,35 @@ def print_phone_report(result):
                      "🟡" if r["severity"] == "MEDIUM" else "🔵"
             print(f"    {marker} [{r['severity']}] {r['detail']}")
     else:
-        print(f"\n[✓] No risk indicators detected")
+        print(f"\n[OK] No risk indicators detected")
 
+    # Metadata note
+    if result["risk"].get("metadata_limited"):
+        print(f"\n[i] Note: Carrier/type data incomplete for this region.")
+        print(f"    Risk analysis may be limited.")
+
+    # Reputation
     rep = result.get("reputation", {})
     if not rep.get("checked"):
         print(f"\n[i] Reputation: not checked")
         print(f"    {rep.get('reason', '')}")
         print(f"    Try these manual lookups:")
         for sug in rep.get("suggestions", []):
-            print(f"      • {sug}")
+            print(f"      - {sug}")
 
     print("\n" + "=" * 70 + "\n")
 
+
+# ============================================================
+# CLI
+# ============================================================
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
         print("Usage: python -m modules.phone_osint +963912345678")
         sys.exit(1)
+
+    logging.basicConfig(level=logging.INFO)
     r = analyze_phone_number(sys.argv[1])
     print_phone_report(r)

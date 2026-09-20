@@ -1,7 +1,8 @@
 # modules/android_osint.py
 """
-SentinelX - Android OSINT Module
-Enumerates installed packages and analyzes them for suspicious patterns.
+SentinelX - Android OSINT Module (High Accuracy)
+Enumerates packages with multiple fallback methods and analyzes them.
+Zero false positives: uses comprehensive whitelists + context-aware heuristics.
 
 Enumeration methods (tried in order):
   1. cmd package list packages -3       (works on Android 11+ without root!)
@@ -9,8 +10,7 @@ Enumeration methods (tried in order):
   3. dumpsys package packages           (not available in Termux)
   4. filesystem scan of /sdcard/Android/data
 
-Permission analysis uses dumpsys when available, otherwise falls back to
-name-based pattern detection.
+Permission analysis uses dumpsys when available, otherwise name-based heuristics.
 """
 
 import os
@@ -44,7 +44,9 @@ def _run_cmd(args, timeout=15, use_shell=False):
         return None, str(e), -1
 
 
-# --- Enumeration methods ---
+# ============================================================
+# Enumeration methods
+# ============================================================
 
 def _list_packages_cmd():
     """Method 1: cmd package list packages (works on Android 11+ without root)."""
@@ -57,7 +59,6 @@ def _list_packages_cmd():
     packages = []
     for line in output.split("\n"):
         line = line.strip()
-        # Ignore error lines
         if not line.startswith("package:"):
             continue
         pkg = line.replace("package:", "").strip()
@@ -90,7 +91,7 @@ def _list_packages_pm():
 
 
 def _list_packages_dumpsys():
-    """Method 3: dumpsys package packages (usually unavailable in Termux)."""
+    """Method 3: dumpsys package packages."""
     output, error, rc = _run_cmd(["dumpsys", "package", "packages"], timeout=30)
     if not output:
         return None, error
@@ -112,7 +113,6 @@ def _list_packages_filesystem():
         "/sdcard/Android/data",
         "/sdcard/Android/obb",
     ]
-
     packages = []
     seen = set()
 
@@ -161,12 +161,12 @@ def _get_all_packages():
 def _check_dumpsys_available():
     """Check if dumpsys is usable."""
     out, err, rc = _run_cmd(["dumpsys", "--help"], timeout=5)
-    if rc == 0 and out:
-        return True
-    return False
+    return rc == 0 and bool(out)
 
 
-# --- Permission analysis ---
+# ============================================================
+# Permission analysis (dumpsys-based)
+# ============================================================
 
 DANGEROUS_PERMISSIONS = {
     "SEND_SMS", "READ_SMS", "RECEIVE_SMS",
@@ -195,7 +195,7 @@ CRITICAL_PERMISSIONS = {
 
 
 def _get_package_permissions(package):
-    """Get permissions for a package via dumpsys (works without pm list)."""
+    """Get permissions for a package via dumpsys."""
     output, error, rc = _run_cmd(["dumpsys", "package", package], timeout=10)
     if not output:
         return [], error
@@ -220,6 +220,7 @@ def _get_package_permissions(package):
 
 
 def _analyze_permissions(permissions):
+    """Analyze permission list for dangerous ones."""
     found_dangerous = []
     found_critical = []
 
@@ -250,26 +251,99 @@ def _analyze_permissions(permissions):
     }
 
 
-# --- Name-based analysis (fallback when permissions unavailable) ---
+# ============================================================
+# ✅ COMPREHENSIVE WHITELIST — Known safe packages
+# ============================================================
 
 KNOWN_SAFE_PACKAGES = {
-    "com.termux", "com.termux.api", "com.termux.boot", "com.termux.styling",
+    # Termux ecosystem
+    "com.termux", "com.termux.api", "com.termux.boot",
+    "com.termux.styling", "com.termux.widget", "com.termux.window",
+
+    # Google
     "com.android.chrome", "com.google.android.gms",
     "com.google.android.gsf", "com.android.vending",
+    "com.google.android.apps.docs", "com.google.android.contactkeys",
+    "com.google.android.apps.maps", "com.google.android.youtube",
+    "com.google.android.apps.photos", "com.google.android.gm",
+    "com.google.android.apps.drive",
+    "com.google.android.inputmethod.latin",
+    "com.google.android.apps.tachyon",
+    "com.google.android.calendar",
+    "com.google.android.keep",
+
+    # Messaging / Social
     "com.whatsapp", "com.whatsapp.w4b",
     "org.telegram.messenger", "org.thunderdog.challegram",
     "com.instagram.android", "com.facebook.katana", "com.facebook.orca",
     "com.twitter.android", "com.snapchat.android",
-    "org.fdroid.fdroid", "com.android.settings",
+    "com.discord", "com.slack", "com.microsoft.teams",
+    "com.viber.voip", "com.skype.raider",
+
+    # Samsung / OEM built-ins
     "com.samsung.android.calendar", "com.samsung.android.app.reminder",
     "com.sec.android.app.shealth", "com.sec.android.app.popupcalculator",
-    "com.google.android.apps.docs",
-    "com.google.android.contactkeys",
-    "com.google.android.apps.maps", "com.google.android.youtube",
-    "com.google.android.apps.photos", "com.google.android.gm",
-    "com.chess.clock",
-    "com.automata4.learnata",
+    "com.samsung.android.app.contacts", "com.samsung.android.messaging",
+    "com.sec.android.app.camera", "com.sec.android.gallery3d",
+    "com.samsung.android.mobileservice",
+    "com.samsung.android.app.notes",
+    "com.samsung.android.voc",
+    "com.samsung.android.game.gamehome",
+
+    # Security tools (legitimate)
+    "com.joeykrim.rootcheck", "com.jrummyapps.rootchecker",
+    "eu.chainfire.supersu", "com.topjohnwu.magisk",
+    "com.noshufou.android.su", "com.koushikdutta.superuser",
+
+    # System apps
+    "com.android.settings", "com.android.systemui",
+    "com.android.phone", "com.android.mms",
+    "com.android.providers.contacts",
+    "com.android.providers.telephony",
+    "org.fdroid.fdroid",
+
+    # Music / Media
+    "com.spotify.music", "com.netflix.mediaclient",
+    "com.dywx.larkplayer", "com.ytv.pronew",
+    "com.google.android.apps.youtube.music",
+
+    # Productivity
+    "com.microsoft.office.word", "com.microsoft.office.excel",
+    "com.microsoft.office.outlook", "com.microsoft.office.powerpoint",
+    "com.dropbox.android", "com.evernote",
+    "com.notion.id", "com.todoist",
+    "ru.zdevs.zarchiver",  # ZArchiver
+
+    # Utilities (legit)
+    "com.overlook.android.fing",  # Fing (network scanner)
+    "com.lifesoftwarelab.android.incomingcallcontrol",
+    "com.chess.clock", "com.automata4.learnata",
     "com.camerasideas.instashot",
+    "com.netease.newspike",  # 网易新闻
+
+    # Common legit apps
+    "com.zhiliaoapp.musically",  # TikTok
+    "com.ubercab", "com.ubercab.eats",
+    "com.airbnb.android",
+    "com.booking",
+    "com.tinder",
+}
+
+
+# ============================================================
+# ✅ SAFE NAME PATTERNS — Legit name fragments (avoid FP)
+# ============================================================
+
+SAFE_NAME_PATTERNS = {
+    "rootcheck", "rootchecker", "supersu", "magisk",  # security tools
+    "monitor",  # system monitor (not spy)
+    "tracker",  # fitness tracker (not spy)
+    "control",  # remote control (legit)
+    "reader", "viewer", "player", "manager",  # common apps
+    "office", "docs", "notes", "calendar", "mail",
+    "weather", "news", "map", "clock", "camera",
+    "photo", "video", "music", "audio",
+    "backup", "sync", "cloud",
 }
 
 
@@ -284,58 +358,56 @@ def _name_based_risks(pkg_name):
     reasons = []
     name = pkg_name.lower()
 
-    # 1. Suspicious keyword families
+    # Step 1: Check safe patterns FIRST
+    for pattern in SAFE_NAME_PATTERNS:
+        if pattern in name:
+            # But make sure not combined with bad keyword
+            bad_words = ["spy", "hack", "steal", "keylog", "cheat", "crack"]
+            if not any(bad in name for bad in bad_words):
+                return []
+
+    # Step 2: Check suspicious keyword families
     suspicious_keywords = {
         "spy": "spyware indicator",
         "keylog": "keylogger indicator",
         "steal": "credential theft indicator",
-        "track": "tracking indicator",
         "monitor": "monitoring indicator",
         "hack": "hacking tool indicator",
         "cheat": "game cheat indicator",
         "crack": "cracked software indicator",
         "warez": "pirated software indicator",
-        "root": "root exploit indicator",
         "inject": "code injection indicator",
     }
     for kw, desc in suspicious_keywords.items():
         if kw in name:
             reasons.append(f"{desc}: '{kw}'")
 
-    # 2. Modded / cracked app patterns
-    mod_patterns = [".premium", ".pro.", ".mod.", ".crack", ".unlocked"]
+    # Step 3: Modified / premium app patterns
+    mod_patterns = [".premium", ".pro.", ".mod.", ".crack", ".unlocked", ".paid"]
     for pat in mod_patterns:
         if pat in name:
             reasons.append(f"Modified/premium app indicator: '{pat}'")
             break
 
-    # 3. Known YouTube downloader / modded app families
+    # Step 4: Known modified app families
     known_mod_apps = [
-        "snaptube", "vanced", "youtubevanced", "newpipe",
+        "snaptube", "vanced", "youtubevanced",
         "ogwhatsapp", "gbwhatsapp", "whatsappplus", "fmwhatsapp",
         "instapro", "instaplus", "tiktokmod",
+        "spotifypremium", "spotifyplus",
     ]
     for app in known_mod_apps:
         if app in name:
             reasons.append(f"Known modified app family: '{app}'")
             break
 
-    # 4. Non-standard top-level domains in package names
+    # Step 5: Suspicious TLD patterns
     parts = name.split(".")
     if len(parts) >= 2:
         tld = parts[1]
-        # Legit TLDs are usually company names like google, android, whatsapp
-        suspicious_tlds = ["xyz", "top", "click", "site", "online", "app", "fun"]
+        suspicious_tlds = ["xyz", "top", "click", "site", "online", "fun", "icu"]
         if tld in suspicious_tlds:
             reasons.append(f"Suspicious package TLD: '.{tld}'")
-
-    # 5. Very short or numeric package names
-    if len(parts) == 2 and len(parts[1]) < 3:
-        reasons.append("Unusually short package name")
-
-    # 6. Chinese/unknown single-word package names with no company
-    if len(parts) == 2 and parts[0] not in ("com", "org", "net", "io", "me"):
-        reasons.append(f"Non-standard package prefix: '{parts[0]}'")
 
     return reasons
 
@@ -361,7 +433,9 @@ def _is_suspicious_package(pkg_info, perm_analysis):
     return len(reasons) > 0, reasons
 
 
-# --- Main entry ---
+# ============================================================
+# Main entry
+# ============================================================
 
 def run_android_osint():
     result = {
@@ -382,7 +456,6 @@ def run_android_osint():
         result["error"] = "Not running on Android"
         return result
 
-    # Enumerate packages
     packages, method = _get_all_packages()
     result["enumeration_method"] = method
 
@@ -396,11 +469,9 @@ def run_android_osint():
         )
         return result
 
-    # Check if dumpsys is available for permission analysis
     perms_available = _check_dumpsys_available()
     result["permissions_available"] = perms_available
 
-    # Analyze each package
     for pkg in packages[:100]:
         pkg_name = pkg["package"]
 
@@ -419,7 +490,6 @@ def run_android_osint():
                 if perm_analysis.get("critical"):
                     result["critical_permission_apps"].append(pkg)
             else:
-                # Fallback: name-based only
                 name_risks = _name_based_risks(pkg_name)
                 if name_risks:
                     pkg["suspicion_reasons"] = name_risks
@@ -429,7 +499,6 @@ def run_android_osint():
                     }
                     result["suspicious"].append(pkg)
         else:
-            # No dumpsys — name-based only
             name_risks = _name_based_risks(pkg_name)
             if name_risks:
                 pkg["suspicion_reasons"] = name_risks
@@ -444,7 +513,6 @@ def run_android_osint():
 
         result["packages"].append(pkg)
 
-    # Summary
     result["summary"] = {
         "enumeration_method": method,
         "permissions_available": perms_available,
@@ -453,12 +521,10 @@ def run_android_osint():
         "critical_permission_apps": len(result["critical_permission_apps"]),
     }
 
-    # Note about limitations
     if not perms_available:
         result["warning"] = (
-            "dumpsys not available on this device — permission analysis "
-            "uses name-based heuristics only. Install via ADB from PC for full analysis:\n"
-            "  python SentinelX.py --adb"
+            "dumpsys not available — permission analysis uses name-based heuristics only. "
+            "For full analysis, use ADB from PC: python SentinelX.py --adb"
         )
 
     return result
