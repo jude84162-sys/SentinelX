@@ -1,0 +1,9 @@
+{
+  "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f": "EICAR-Test-File",
+  "24d004a104d4d54034dbcffc2a4b19a11f39008a575aa614ea04703480b1022c": "WannaCry.Ransomware",
+  "027cc450ef5f8c5f653329641ec1fed91f694e0d229928963b30f6b0d7d3a745": "NotPetya.Ransomware",
+  "ed01ebfbc9eb5bbea545af4d01bf5f1071661840480439c6e5babe8e080e41aa": "WannaCry.Variant.B",
+  "a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3": "Emotet.Sample",
+  "d41d8cd98f00b204e9800998ecf8427e": "Empty.File",
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": "Empty.SHA256"
+}

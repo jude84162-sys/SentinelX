@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 SentinelX - Modular Enterprise Blue Team Suite
-Cross-platform: Termux, WSL, Kali, Linux, macOS.
+Cross-platform: Termux, WSL, Kali, Linux, macOS, Windows, Docker.
 
 Main entry point.
 """
@@ -21,6 +21,7 @@ from modules.network import run_network_analysis, print_network_report
 from modules.files import run_file_triage, print_file_report
 from modules.persistence import run_persistence_check, print_persistence_report
 from modules.resources import run_resource_check, print_resource_report
+from modules.ioc_hunter import scan_path as ioc_scan, print_ioc_report
 
 # Android modules
 from modules.network_android import run_android_network_triage, print_android_network_report
@@ -51,7 +52,7 @@ BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-VERSION = "1.1.0"
+VERSION = "1.3.0"
 
 
 def configure_logging(quiet=False, verbose=False):
@@ -109,8 +110,27 @@ def _send_notification(env, report_data):
             logger.debug(f"Desktop notification failed: {e}")
 
 
+def _get_download_dirs():
+    """Get appropriate download directories per platform."""
+    import os
+    system = __import__("platform").system().lower()
+    home = os.path.expanduser("~")
+
+    if "android" in __import__("platform").platform().lower():
+        return [
+            os.path.expanduser("~/storage/shared/Download"),
+            "/storage/emulated/0/Download",
+        ]
+    if system == "windows":
+        return [f"{home}\\Downloads"]
+    if system == "darwin":
+        return [f"{home}/Downloads"]
+    return [f"{home}/Downloads"]
+
+
 def run_triage_all(output_file="full_triage_report.json"):
     env = get_environment()
+    import os
 
     report_data = {
         "timestamp": datetime.now().isoformat(),
@@ -160,7 +180,32 @@ def run_triage_all(output_file="full_triage_report.json"):
     report_data["persistence"] = run_persistence_check()
     print_persistence_report(report_data["persistence"])
 
-    # 6. Android-only modules
+    # 6. IOC Hunter (malware hash detection)
+    logger.info("[*] Running IOC Hunt on Download folders...")
+    ioc_results = []
+    for dl_dir in _get_download_dirs():
+        if os.path.isdir(dl_dir):
+            logger.info(f"    Scanning {dl_dir}...")
+            try:
+                result = ioc_scan(dl_dir)
+                ioc_results.append(result)
+                print_ioc_report(result)
+            except Exception as e:
+                logger.warning(f"    IOC scan failed for {dl_dir}: {e}")
+
+    if ioc_results:
+        # Merge results
+        report_data["ioc_hunter"] = {
+            "timestamp": datetime.now().isoformat(),
+            "scans": ioc_results,
+            "total_matches": sum(len(r.get("matches", [])) for r in ioc_results),
+            "total_scanned": sum(r.get("scanned", 0) for r in ioc_results),
+            "ioc_database_size": ioc_results[0].get("ioc_count", 0) if ioc_results else 0,
+        }
+    else:
+        logger.info("[i] No download folders to scan")
+
+    # 7. Android-only modules
     if env["is_android"]:
         logger.info("[*] Running Android OSINT (Apps & Permissions)...")
         report_data["android_osint"] = run_android_osint()
@@ -188,7 +233,7 @@ def run_triage_all(output_file="full_triage_report.json"):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SentinelX - Blue Team Security Suite (Termux/WSL/Kali/Linux/macOS)",
+        description="SentinelX - Blue Team Security Suite (Termux/WSL/Kali/Linux/macOS/Windows/Docker)",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
@@ -200,6 +245,10 @@ def main():
     parser.add_argument("--network", action="store_true", help="Network analysis only")
     parser.add_argument("--files", action="store_true", help="File triage only")
     parser.add_argument("--persistence", action="store_true", help="Persistence check only")
+
+    # IOC Hunter
+    parser.add_argument("--ioc", type=str, default=None, metavar="PATH",
+                        help="Scan path for known malware hashes (SHA-256)")
 
     # Android
     parser.add_argument("--android", action="store_true", help="Android OSINT only")
@@ -222,7 +271,7 @@ def main():
     parser.add_argument("--scan-once", action="store_true",
                         help="Run one daemon scan cycle and exit")
 
-    # Notifications / Info
+    # Info / notifications
     parser.add_argument("--notify-test", action="store_true",
                         help="Test notification system")
     parser.add_argument("--env", action="store_true", help="Show environment info")
@@ -247,7 +296,7 @@ def main():
     print_banner(env)
 
     # ============================================================
-    # Daemon commands (no banner needed for cleaner output)
+    # Daemon commands
     # ============================================================
     if args.daemon:
         print("[*] Starting SentinelX daemon...")
@@ -307,6 +356,22 @@ def main():
                     f"{result['summary']['e164']} - {result['summary']['risk_level']} risk",
                     urgency="normal"
                 )
+        return
+
+    # ============================================================
+    # IOC Hunter
+    # ============================================================
+    if args.ioc:
+        import os
+        target = os.path.expanduser(args.ioc)
+        if not os.path.exists(target):
+            print(f"Error: {target} not found")
+            return
+
+        print(f"[*] Scanning {target} for known malware hashes...")
+        result = ioc_scan(target)
+        print_ioc_report(result)
+        save_report({"ioc_scan": result}, args.output)
         return
 
     # ============================================================
