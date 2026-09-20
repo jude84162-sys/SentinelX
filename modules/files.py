@@ -1,13 +1,13 @@
 # modules/files.py
 """
-SentinelX - File System Triage (High-Accuracy Final)
+SentinelX - File System Triage (Universal)
 Zero false positives. Detects:
 - EICAR test files (content-based, industry standard)
 - Malware content patterns (reverse shells, web shells)
 - Suspicious extensions and filenames
 - Large/suspicious files in critical paths
 
-Cross-platform: Android (Termux), Linux, macOS, WSL.
+Cross-platform: Android, Linux, macOS, Windows, WSL, Docker.
 """
 
 import os
@@ -24,58 +24,102 @@ def _is_android():
 
 
 # ============================================================
-# Scan paths (expanded coverage, canonical, no duplicates)
+# Platform-specific scan paths
 # ============================================================
 
-if _is_android():
-    # Canonical paths — /sdcard is a symlink to /storage/emulated/0
-    SCAN_PATHS = [
-        "/storage/emulated/0/Download",
-        "/storage/emulated/0/Documents",
-        "/storage/emulated/0/DCIM",
-        "/storage/emulated/0/Pictures",
-        "/storage/emulated/0/Movies",
-        "/storage/emulated/0/Music",
-        "/storage/emulated/0/Android/media",
-        os.path.expanduser("~"),
-    ]
-    SAFE_PATHS = [
-        # User folders on Android — normal content, don't flag
-        "/storage/emulated/0/Download",
-        "/storage/emulated/0/Documents",
-        "/storage/emulated/0/DCIM",
-        "/storage/emulated/0/Pictures",
-        "/storage/emulated/0/Music",
-        "/storage/emulated/0/Movies",
-        "/storage/emulated/0/WhatsApp",
-        "/storage/emulated/0/Android/media",
-        # Termux system
-        "/data/data/com.termux/files/usr",
-        "/data/data/com.termux/files/home/go/pkg",
-        "/data/data/com.termux/files/home/.cache",
-        "/data/data/com.termux/files/home/.local",
-        "/data/data/com.termux/files/home/.termux/boot",
-        "/data/data/com.termux/files/home/SentinelX",
-    ]
-else:
-    SCAN_PATHS = [
-        os.path.expanduser("~"),
+def _get_scan_paths():
+    """Return (scan_paths, safe_paths) for current platform."""
+    system = platform.system().lower()
+
+    if _is_android():
+        scan = [
+            "/storage/emulated/0/Download",
+            "/storage/emulated/0/Documents",
+            "/storage/emulated/0/DCIM",
+            "/storage/emulated/0/Pictures",
+            "/storage/emulated/0/Movies",
+            "/storage/emulated/0/Music",
+            "/storage/emulated/0/Android/media",
+            os.path.expanduser("~"),
+        ]
+        safe = [
+            "/storage/emulated/0/Download",
+            "/storage/emulated/0/Documents",
+            "/storage/emulated/0/DCIM",
+            "/storage/emulated/0/Pictures",
+            "/storage/emulated/0/Music",
+            "/storage/emulated/0/Movies",
+            "/storage/emulated/0/WhatsApp",
+            "/storage/emulated/0/Android/media",
+            "/data/data/com.termux/files/usr",
+            "/data/data/com.termux/files/home/go/pkg",
+            "/data/data/com.termux/files/home/.cache",
+            "/data/data/com.termux/files/home/.local",
+            "/data/data/com.termux/files/home/.termux/boot",
+            "/data/data/com.termux/files/home/SentinelX",
+        ]
+        return scan, safe
+
+    if system == "darwin":  # macOS
+        home = os.path.expanduser("~")
+        scan = [
+            f"{home}/Downloads",
+            f"{home}/Documents",
+            f"{home}/Desktop",
+            "/tmp",
+            "/var/tmp",
+            "/private/var/tmp",
+        ]
+        safe = [
+            "/System", "/Library", "/Applications",
+            "/private/var/db", "/private/var/folders",
+            f"{home}/.cache",
+            f"{home}/Library/Caches",
+            f"{home}/go/pkg",
+        ]
+        return scan, safe
+
+    if system == "windows":
+        home = os.path.expanduser("~")
+        scan = [
+            f"{home}\\Downloads",
+            f"{home}\\Documents",
+            f"{home}\\Desktop",
+            os.environ.get("TEMP", "C:\\Windows\\Temp"),
+            "C:\\Windows\\Temp",
+            "C:\\Temp",
+        ]
+        safe = [
+            "C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)",
+            "C:\\ProgramData",
+            f"{home}\\AppData\\Local\\Temp",
+            f"{home}\\.cache",
+        ]
+        return scan, safe
+
+    # Linux (default) — covers native Linux, WSL, Kali, Docker
+    home = os.path.expanduser("~")
+    scan = [
+        f"{home}/Downloads",
+        f"{home}/Documents",
+        f"{home}/Desktop",
         "/tmp",
         "/var/tmp",
         "/dev/shm",
     ]
-    SAFE_PATHS = [
-        os.path.expanduser("~/Downloads"),
-        os.path.expanduser("~/Documents"),
-        os.path.expanduser("~/Pictures"),
+    safe = [
         "/usr/lib", "/usr/share", "/usr/local/lib",
-        "/var/lib/dpkg", "/var/cache",
-        os.path.expanduser("~/.cache"),
-        os.path.expanduser("~/.local"),
-        os.path.expanduser("~/go/pkg"),
-        os.path.expanduser("~/.cargo"),
-        os.path.expanduser("~/.rustup"),
+        "/var/lib/dpkg", "/var/lib/rpm", "/var/cache",
+        f"{home}/.cache",
+        f"{home}/.local",
+        f"{home}/go/pkg",
+        f"{home}/.cargo",
+        f"{home}/.rustup",
     ]
+    return scan, safe
+
+
+SCAN_PATHS, SAFE_PATHS = _get_scan_paths()
 
 
 # ============================================================
@@ -99,6 +143,8 @@ HOME_DOTFILE_WHITELIST = {
     ".npmrc", ".config", ".ssh", ".gnupg",
     ".curlrc", ".wgetrc", ".inputrc",
     ".termux", ".wget-hsts", ".viminfo",
+    # Windows
+    ".bash_profile", "ntuser.dat", "ntuser.ini",
 }
 
 SKIP_PATH_FRAGMENTS = [
@@ -125,11 +171,17 @@ SKIP_PATH_FRAGMENTS = [
 # Threat signatures
 # ============================================================
 
-HIGH_RISK_EXTENSIONS = {".sh", ".elf", ".dex", ".so", ".pl", ".rb", ".bin"}
-MEDIUM_RISK_EXTENSIONS = {".apk", ".exe", ".msi", ".jar", ".js", ".vbs", ".scr"}
+HIGH_RISK_EXTENSIONS = {
+    ".sh", ".elf", ".dex", ".so", ".pl", ".rb", ".bin",
+    ".ps1", ".bat", ".cmd", ".vbs",           # Windows
+    ".dylib",                                  # macOS
+}
 
-# Note: 'hack', 'spy', 'steal' removed — too many false positives
-# (e.g., "hack cs 1.6" game cheats are not malware)
+MEDIUM_RISK_EXTENSIONS = {
+    ".apk", ".exe", ".msi", ".jar", ".js", ".scr",
+    ".com", ".pif", ".hta", ".cpl",           # Windows extras
+}
+
 RED_FLAG_NAMES = {
     "payload", "exploit", "backdoor", "reverse",
     "bind_shell", "meterpreter", "rootkit",
@@ -143,14 +195,16 @@ SUSPICIOUS_DIRS = [
     "/var/tmp",
     "/run/user",
     "/data/local/tmp",
+    "C:\\Temp",
+    "\\AppData\\Local\\Temp",
 ]
 
 # EICAR — industry-standard antivirus test
 EICAR_SIGNATURE = b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE"
 
-# Malware content patterns (byte sequences in file content)
+# Malware content patterns
 MALWARE_CONTENT_PATTERNS = [
-    # Reverse shells
+    # Linux reverse shells
     b"nc -e /bin/bash",
     b"nc -e /bin/sh",
     b"bash -i >& /dev/tcp/",
@@ -161,9 +215,13 @@ MALWARE_CONTENT_PATTERNS = [
     # PowerShell
     b"powershell -e",
     b"powershell -enc",
+    b"powershell -EncodedCommand",
     b"IEX(New-Object",
     b"DownloadString(",
     b"System.Reflection.Assembly",
+    b"Invoke-Expression",
+    b"-nop -w hidden",              # Windows malware pattern
+    b"-ExecutionPolicy Bypass",
     # Web shells
     b"eval(base64_decode",
     b"eval(gzinflate",
@@ -181,7 +239,9 @@ MALWARE_CONTENT_PATTERNS = [
 
 def _is_in_safe_path(path):
     path_str = str(path)
-    return any(path_str.startswith(safe) for safe in SAFE_PATHS)
+    # Normalize Windows paths
+    path_lower = path_str.lower()
+    return any(path_lower.startswith(safe.lower()) for safe in SAFE_PATHS)
 
 
 def _should_skip_path(path_str):
@@ -221,7 +281,7 @@ def _get_file_info(path):
 
 def _check_eicar(path, size):
     """Check for EICAR test file signature."""
-    if size > 512:  # EICAR file is ~68 bytes
+    if size > 512:
         return False
     try:
         with open(path, "rb") as f:
@@ -232,29 +292,25 @@ def _check_eicar(path, size):
 
 
 def _check_malware_content(path, size):
-    """Check content for malware patterns. Only small files."""
-    if size > 1024 * 1024:  # Skip files > 1MB
+    """Check content for malware patterns."""
+    if size > 1024 * 1024:
         return None
     if size < 4:
         return None
 
     ext = os.path.splitext(path)[1].lower()
-    # Only scan text-like or script files
     if ext not in {".sh", ".pl", ".rb", ".py", ".js", ".php",
                    ".txt", ".elf", ".dex", ".bat", ".cmd", ".ps1", ""}:
         return None
 
     try:
         with open(path, "rb") as f:
-            content = f.read(64 * 1024)  # First 64KB
-
+            content = f.read(64 * 1024)
         for pattern in MALWARE_CONTENT_PATTERNS:
             if pattern in content:
                 return pattern.decode("utf-8", errors="replace")
-
     except (PermissionError, OSError):
         pass
-
     return None
 
 
@@ -269,7 +325,7 @@ def _is_suspicious_file(info):
     ext = info["extension"]
     size = info["size"]
 
-    # Layer 0: whitelist (never suspicious)
+    # Layer 0: whitelist
     if _is_whitelisted(name_lower):
         return False, None
 
@@ -277,16 +333,16 @@ def _is_suspicious_file(info):
     if _should_skip_path(path_str):
         return False, None
 
-    # Layer 2: EICAR test file (highest priority — content check)
+    # Layer 2: EICAR (highest priority)
     if _check_eicar(path_str, size):
         return True, "EICAR test file detected"
 
-    # Layer 3: red flag names (always suspicious, regardless of location)
+    # Layer 3: red flag names
     for flag in RED_FLAG_NAMES:
         if flag in name_lower:
             return True, f"Red flag in name: '{flag}'"
 
-    # Layer 4: files in suspicious directories (regardless of user folders)
+    # Layer 4: suspicious directories
     for sdir in SUSPICIOUS_DIRS:
         if path_str.startswith(sdir):
             return True, f"File in suspicious directory: {sdir}"
@@ -296,25 +352,25 @@ def _is_suspicious_file(info):
     if pattern:
         return True, f"Malware pattern in content: '{pattern}'"
 
-    # Layer 6: skip everything below for user's personal folders
+    # Layer 6: safe path check
     if _is_in_safe_path(path_str):
         return False, None
 
-    # Layer 7: high-risk extensions outside safe paths
+    # Layer 7: high-risk extensions
     if ext in HIGH_RISK_EXTENSIONS:
         return True, f"High-risk extension: {ext}"
 
-    # Layer 8: medium-risk extensions outside safe paths
+    # Layer 8: medium-risk extensions
     if ext in MEDIUM_RISK_EXTENSIONS:
         return True, f"Executable outside safe path: {ext}"
 
     # Layer 9: hidden files outside home
     if info["name"].startswith(".") and info["age_days"] <= 3:
         home = os.path.expanduser("~")
-        if not path_str.startswith(home + "/") and path_str != home:
+        if not path_str.startswith(home + os.sep) and path_str != home:
             return True, "Recently modified hidden file outside home"
 
-    # Layer 10: very large files (>500MB) outside safe paths
+    # Layer 10: very large files
     if size > 500 * 1024 * 1024:
         return True, f"Very large file: {info['size_human']}"
 
@@ -326,7 +382,6 @@ def _is_suspicious_file(info):
 # ============================================================
 
 def run_file_triage():
-    """Full file system triage."""
     result = {
         "timestamp": datetime.now().isoformat(),
         "platform": platform.platform(),
@@ -342,7 +397,6 @@ def run_file_triage():
         "summary": {},
     }
 
-    # Track real paths to avoid duplicates (symlinks like /sdcard)
     scanned_real_paths = set()
 
     for scan_path in SCAN_PATHS:
@@ -360,7 +414,7 @@ def run_file_triage():
         try:
             list(path.iterdir())
             path_info["accessible"] = True
-        except PermissionError:
+        except (PermissionError, OSError):
             path_info["error"] = "Permission denied"
             result["errors"].append(f"Cannot access {scan_path}")
             result["scan_paths"].append(path_info)
@@ -373,7 +427,6 @@ def run_file_triage():
                 if not entry.is_file():
                     continue
 
-                # Skip duplicates via realpath
                 try:
                     real = os.path.realpath(entry)
                     if real in scanned_real_paths:
@@ -405,12 +458,10 @@ def run_file_triage():
                     elif "Malware pattern" in reason:
                         result["malware_content"].append(info)
 
-                # Recent executables (last 7 days)
-                if info["extension"] in {".elf", ".sh"} and info["age_days"] <= 7:
+                if info["extension"] in {".elf", ".sh", ".ps1", ".bat"} and info["age_days"] <= 7:
                     if not _is_in_safe_path(info["path"]):
                         result["recent_executables"].append(info)
 
-                # Large files (>200MB)
                 if info["size"] > 200 * 1024 * 1024:
                     result["large_files"].append(info)
 
@@ -459,21 +510,18 @@ def print_file_report(result):
     if result.get("warning"):
         print(f"\n[!] {result['warning']}")
 
-    # EICAR (highest priority)
     if result.get("eicar_detected"):
         print(f"\n[!] EICAR test files detected ({len(result['eicar_detected'])}):")
         for f in result["eicar_detected"]:
             print(f"    🔴 {f['path']}")
             print(f"       {f['reason']}")
 
-    # Malware content
     if result.get("malware_content"):
         print(f"\n[!] Malware patterns in content ({len(result['malware_content'])}):")
         for f in result["malware_content"]:
             print(f"    🔴 {f['path']}")
             print(f"       {f['reason']}")
 
-    # Other suspicious
     other = [f for f in result.get("suspicious", [])
              if f not in result.get("eicar_detected", [])
              and f not in result.get("malware_content", [])]
@@ -483,19 +531,16 @@ def print_file_report(result):
             print(f"    ⚠ {f['path']}")
             print(f"       Reason: {f['reason']} ({f['size_human']}, {f['age_days']}d old)")
 
-    # Recent executables
     if result.get("recent_executables"):
         print(f"\n[*] Recently modified executables (last 7 days):")
         for f in result["recent_executables"][:10]:
             print(f"    - {f['path']} ({f['size_human']}, {f['age_days']}d)")
 
-    # Large files
     if result.get("large_files"):
         print(f"\n[*] Large files (>200MB):")
         for f in result["large_files"][:10]:
             print(f"    - {f['path']} ({f['size_human']})")
 
-    # Errors
     if result.get("errors"):
         print(f"\n[!] Access errors:")
         for e in result["errors"][:5]:
@@ -503,10 +548,6 @@ def print_file_report(result):
 
     print("\n" + "=" * 70 + "\n")
 
-
-# ============================================================
-# CLI
-# ============================================================
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

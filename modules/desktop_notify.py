@@ -1,8 +1,8 @@
 # modules/desktop_notify.py
 """
-SentinelX - Desktop Notifications
-Cross-platform: Linux (notify-send), macOS (osascript), Windows (win10toast),
-WSL (falls back to Windows via powershell.exe).
+SentinelX - Desktop Notifications (Universal)
+Supports: Linux (notify-send), macOS (osascript),
+Windows (PowerShell toast), WSL (Windows bridge).
 """
 
 import subprocess
@@ -35,23 +35,50 @@ def _run(cmd, timeout=10):
         return False
 
 
+def _powershell_toast(title, content):
+    """Send Windows toast via PowerShell."""
+    ps = (
+        "[reflection.assembly]::loadwithpartialname('System.Windows.Forms') | Out-Null;"
+        "[reflection.assembly]::loadwithpartialname('System.Drawing') | Out-Null;"
+        "$n = New-Object System.Windows.Forms.NotifyIcon;"
+        "$n.Icon = [System.Drawing.SystemIcons]::Information;"
+        "$n.Visible = $true;"
+        f"$n.ShowBalloonTip(10000, '{title}', '{content}', "
+        "[System.Windows.Forms.ToolTipIcon]::Info);"
+    )
+    # Native Windows
+    if platform.system().lower() == "windows":
+        for exe in ("powershell", "pwsh"):
+            if _has(exe):
+                return _run([exe, "-NoProfile", "-Command", ps], timeout=15)
+    # WSL → Windows
+    if _is_wsl() and _has("powershell.exe"):
+        return _run(["powershell.exe", "-NoProfile", "-Command", ps], timeout=15)
+    return False
+
+
 def notify(title, content, urgency="normal"):
-    """
-    Send a desktop notification.
-    urgency: low, normal, critical
-    """
+    """Send desktop notification on any platform."""
     system = platform.system().lower()
+
+    # Windows
+    if system == "windows":
+        if _powershell_toast(title, content):
+            return True
+
+    # macOS
+    if system == "darwin":
+        if _has("osascript"):
+            script = f'display notification "{content}" with title "SentinelX: {title}"'
+            return _run(["osascript", "-e", script], timeout=10)
 
     # Linux native
     if system == "linux" and not _is_wsl():
         if _has("notify-send"):
             return _run([
-                "notify-send",
-                "-u", urgency,
-                "-a", "SentinelX",
+                "notify-send", "-u", urgency, "-a", "SentinelX",
                 title, content
             ])
-        # Fallback to zenity
         if _has("zenity"):
             return _run([
                 "zenity", "--info",
@@ -60,34 +87,18 @@ def notify(title, content, urgency="normal"):
                 "--timeout", "10"
             ])
 
-    # WSL — use Windows toast via PowerShell
+    # WSL → Windows
     if _is_wsl():
-        if _has("powershell.exe"):
-            ps = (
-                "[reflection.assembly]::loadwithpartialname('System.Windows.Forms');"
-                "[reflection.assembly]::loadwithpartialname('System.Drawing');"
-                "$notify = New-Object System.Windows.Forms.NotifyIcon;"
-                "$notify.Icon = [System.Drawing.SystemIcons]::Information;"
-                "$notify.Visible = $true;"
-                f"$notify.ShowBalloonTip(10000, 'SentinelX: {title}', '{content}', "
-                "[System.Windows.Forms.ToolTipIcon]::Info);"
-            )
-            return _run(["powershell.exe", "-NoProfile", "-Command", ps])
+        if _powershell_toast(title, content):
+            return True
 
-    # macOS
-    if system == "darwin":
-        if _has("osascript"):
-            script = f'display notification "{content}" with title "SentinelX: {title}"'
-            return _run(["osascript", "-e", script])
-
-    # Fallback — log to console
+    # Fallback: log
     logger.info(f"[NOTIFY] {title}: {content}")
     print(f"\n[🔔] {title}: {content}\n")
     return True
 
 
 def alert_critical(title, detail):
-    """Critical alert with maximum urgency."""
     return notify(title, detail, urgency="critical")
 
 
@@ -107,7 +118,7 @@ def send_summary_notification(report):
                 critical += obj["high_severity"]
             if isinstance(obj.get("critical_permission_apps"), int):
                 critical += obj["critical_permission_apps"]
-            if isinstance(obj.get("risk_level")):
+            if isinstance(obj.get("risk_level"), str):
                 if obj["risk_level"] in ("HIGH", "CRITICAL"):
                     critical += 1
             for v in obj.values():
@@ -120,21 +131,25 @@ def send_summary_notification(report):
     _walk(report)
 
     if suspicious == 0 and critical == 0:
-        notify("✓ Triage Complete", "No suspicious findings", urgency="low")
+        notify("SentinelX OK", "Triage complete - no suspicious findings",
+               urgency="low")
     elif critical > 0:
-        notify("🚨 SentinelX Alert",
+        notify("SentinelX ALERT",
                f"{critical} critical, {suspicious} total findings",
                urgency="critical")
     else:
-        notify("⚠ SentinelX",
+        notify("SentinelX",
                f"{suspicious} findings to review",
                urgency="normal")
 
 
 if __name__ == "__main__":
     print("Testing desktop notifications...")
-    print(f"Linux notify-send: {_has('notify-send')}")
-    print(f"WSL detection:     {_is_wsl()}")
-    print(f"powershell.exe:    {_has('powershell.exe')}")
-    notify("SentinelX Test", "Desktop notifications working", urgency="normal")
-    print("Done. Check your desktop.")
+    print(f"OS:             {platform.system()}")
+    print(f"WSL:            {_is_wsl()}")
+    print(f"notify-send:    {_has('notify-send')}")
+    print(f"osascript:      {_has('osascript')}")
+    print(f"powershell:     {_has('powershell')}")
+    print(f"powershell.exe: {_has('powershell.exe')}")
+    notify("SentinelX Test", "Desktop notifications working")
+    print("Done.")
