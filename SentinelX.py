@@ -105,7 +105,7 @@ BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 
 def configure_logging(quiet=False, verbose=False):
