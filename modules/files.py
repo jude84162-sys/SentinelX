@@ -24,15 +24,19 @@ def _is_android():
 
 
 # ============================================================
-# Scan paths (canonical, no duplicates)
+# Scan paths (expanded coverage, canonical, no duplicates)
 # ============================================================
 
 if _is_android():
-    # Use /storage/emulated/0 (canonical) — /sdcard is a symlink to it
+    # Canonical paths — /sdcard is a symlink to /storage/emulated/0
     SCAN_PATHS = [
         "/storage/emulated/0/Download",
         "/storage/emulated/0/Documents",
         "/storage/emulated/0/DCIM",
+        "/storage/emulated/0/Pictures",
+        "/storage/emulated/0/Movies",
+        "/storage/emulated/0/Music",
+        "/storage/emulated/0/Android/media",
         os.path.expanduser("~"),
     ]
     SAFE_PATHS = [
@@ -44,6 +48,7 @@ if _is_android():
         "/storage/emulated/0/Music",
         "/storage/emulated/0/Movies",
         "/storage/emulated/0/WhatsApp",
+        "/storage/emulated/0/Android/media",
         # Termux system
         "/data/data/com.termux/files/usr",
         "/data/data/com.termux/files/home/go/pkg",
@@ -123,14 +128,14 @@ SKIP_PATH_FRAGMENTS = [
 HIGH_RISK_EXTENSIONS = {".sh", ".elf", ".dex", ".so", ".pl", ".rb", ".bin"}
 MEDIUM_RISK_EXTENSIONS = {".apk", ".exe", ".msi", ".jar", ".js", ".vbs", ".scr"}
 
+# Note: 'hack', 'spy', 'steal' removed — too many false positives
+# (e.g., "hack cs 1.6" game cheats are not malware)
 RED_FLAG_NAMES = {
     "payload", "exploit", "backdoor", "reverse",
     "bind_shell", "meterpreter", "rootkit",
     "keylogger", "ransom", "cryptolocker",
     "xmrig", "miner", "rat.", "trojan",
     "malware", "virus", "worm",
-    # Note: 'hack', 'spy', 'steal' removed — too many false positives
-    # (e.g., "hack cs 1.6" game cheats are not malware)
 }
 
 SUSPICIOUS_DIRS = [
@@ -152,7 +157,7 @@ MALWARE_CONTENT_PATTERNS = [
     b"bash -i >&/dev/tcp/",
     b"/bin/sh -i",
     b"python -c 'import socket",
-    b"python -c \"import socket",
+    b'python -c "import socket',
     # PowerShell
     b"powershell -e",
     b"powershell -enc",
