@@ -35,13 +35,23 @@ from modules.desktop_notify import notify as desktop_notify
 # Desktop OSINT
 from modules.phone_osint import analyze_phone_number, print_phone_report
 
-# Logger (level configured in main)
+# Daemon
+from modules.daemon import (
+    start_daemon,
+    stop_daemon,
+    daemon_status,
+    _run_full_scan as daemon_scan_once,
+)
+
+# Logger (level set in main)
 logger = logging.getLogger("SentinelX")
 
 # Paths
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+VERSION = "1.1.0"
 
 
 def configure_logging(quiet=False, verbose=False):
@@ -51,7 +61,7 @@ def configure_logging(quiet=False, verbose=False):
     elif verbose:
         level = logging.DEBUG
     else:
-        level = logging.WARNING  # Default: only warnings + errors
+        level = logging.WARNING
 
     logging.basicConfig(
         level=level,
@@ -59,10 +69,8 @@ def configure_logging(quiet=False, verbose=False):
         datefmt='%Y-%m-%d %H:%M:%S',
         force=True,
     )
-    # Apply to all SentinelX sub-loggers
     logging.getLogger("SentinelX").setLevel(level)
 
-    # Silence psutil warnings on Android
     import warnings
     warnings.filterwarnings("ignore", category=RuntimeWarning, module="psutil")
 
@@ -106,7 +114,7 @@ def run_triage_all(output_file="full_triage_report.json"):
 
     report_data = {
         "timestamp": datetime.now().isoformat(),
-        "version": "1.1.0",
+        "version": VERSION,
         "mode": "triage-all",
         "environment": {
             "label": get_env_label(env),
@@ -183,6 +191,8 @@ def main():
         description="SentinelX - Blue Team Security Suite (Termux/WSL/Kali/Linux/macOS)",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
+
+    # Core actions
     parser.add_argument("--triage-all", action="store_true", help="Run all modules")
     parser.add_argument("--process", action="store_true", help="Process analysis only")
     parser.add_argument("--resources", action="store_true",
@@ -190,13 +200,29 @@ def main():
     parser.add_argument("--network", action="store_true", help="Network analysis only")
     parser.add_argument("--files", action="store_true", help="File triage only")
     parser.add_argument("--persistence", action="store_true", help="Persistence check only")
+
+    # Android
     parser.add_argument("--android", action="store_true", help="Android OSINT only")
     parser.add_argument("--android-network", action="store_true",
                         help="Android network (Termux:API) only")
     parser.add_argument("--spyware", action="store_true",
                         help="Android spyware detection only")
+
+    # OSINT
     parser.add_argument("--phone", type=str, default=None,
-                        help="Analyze a phone number in E.164 format (e.g. +963912345678)")
+                        help="Analyze a phone number (E.164, e.g. +963912345678)")
+
+    # Daemon
+    parser.add_argument("--daemon", action="store_true",
+                        help="Start background daemon (24/7 monitoring)")
+    parser.add_argument("--daemon-stop", action="store_true",
+                        help="Stop running daemon")
+    parser.add_argument("--daemon-status", action="store_true",
+                        help="Show daemon status + recent alerts")
+    parser.add_argument("--scan-once", action="store_true",
+                        help="Run one daemon scan cycle and exit")
+
+    # Notifications / Info
     parser.add_argument("--notify-test", action="store_true",
                         help="Test notification system")
     parser.add_argument("--env", action="store_true", help="Show environment info")
@@ -207,9 +233,10 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show debug logs")
 
+    # Report
     parser.add_argument("--output", type=str, default="full_triage_report.json",
                         help="Output report filename")
-    parser.add_argument("--version", action="version", version="SentinelX 1.1.0")
+    parser.add_argument("--version", action="version", version=f"SentinelX {VERSION}")
 
     args = parser.parse_args()
 
@@ -219,11 +246,39 @@ def main():
     env = get_environment()
     print_banner(env)
 
-    # --- Special commands ---
+    # ============================================================
+    # Daemon commands (no banner needed for cleaner output)
+    # ============================================================
+    if args.daemon:
+        print("[*] Starting SentinelX daemon...")
+        print("    Press Ctrl+C to stop.\n")
+        start_daemon()
+        return
+
+    if args.daemon_stop:
+        stop_daemon()
+        return
+
+    if args.daemon_status:
+        daemon_status()
+        return
+
+    if args.scan_once:
+        print("[*] Running single scan cycle...")
+        daemon_scan_once()
+        print("[+] Scan complete.")
+        return
+
+    # ============================================================
+    # Environment info
+    # ============================================================
     if args.env:
         print_env_info(env)
         return
 
+    # ============================================================
+    # Notification test
+    # ============================================================
     if args.notify_test:
         if env["is_android"] and env["has_termux_api"]:
             from modules.notify import notify as and_notify
@@ -236,13 +291,16 @@ def main():
             print("[!] No notification system available")
         return
 
-    # --- Phone OSINT ---
+    # ============================================================
+    # Phone OSINT
+    # ============================================================
     if args.phone:
         result = analyze_phone_number(args.phone)
         print_phone_report(result)
         save_report({"phone_osint": result}, args.output)
 
-        if result.get("valid") and result["summary"]["risk_level"] in ("HIGH", "CRITICAL"):
+        if (result.get("valid") and
+                result["summary"]["risk_level"] in ("HIGH", "CRITICAL")):
             if env["has_desktop_notify"]:
                 desktop_notify(
                     "Phone Risk Detected",
@@ -251,7 +309,9 @@ def main():
                 )
         return
 
-    # --- Module-specific runs ---
+    # ============================================================
+    # Module-specific runs
+    # ============================================================
     if args.triage_all:
         run_triage_all(args.output)
     elif args.process:
