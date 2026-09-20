@@ -1,0 +1,29 @@
+"""Tests for cache_db module."""
+
+import pytest
+
+
+def test_init_db():
+    from modules.cache_db import init_db, DB_PATH
+    init_db()
+    assert DB_PATH.parent.exists()
+
+
+def test_ioc_batch():
+    from modules.cache_db import set_ioc_batch, get_ioc_count
+    test_hash = "1" * 64
+    set_ioc_batch({test_hash: "Test"}, "pytest")
+    assert get_ioc_count() > 0
+
+
+def test_alert_logging():
+    from modules.cache_db import log_alert, get_recent_alerts
+    log_alert("HIGH", "test", "pytest alert")
+    alerts = get_recent_alerts(5)
+    assert len(alerts) > 0
+
+
+def test_stats():
+    from modules.cache_db import get_stats
+    stats = get_stats()
+    assert "ioc_cache" in stats
