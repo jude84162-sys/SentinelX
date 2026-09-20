@@ -3,6 +3,12 @@
 # 🛡️ SentinelX
 
 **Modular Enterprise Blue Team Suite**
+[![Tests](https://github.com/jude84162-sys/SentinelX/actions/workflows/test.yml/badge.svg)](https://github.com/jude84162-sys/SentinelX/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/jude84162-sys/SentinelX)](https://github.com/jude84162-sys/SentinelX/releases)
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Linux%20%7C%20macOS%20%7C%20Windows-green.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/jude84162-sys/SentinelX?style=social)](https://github.com/jude84162-sys/SentinelX/stargazers)
 
 *Cross-platform security triage for Android, Termux, WSL, Kali, and Linux*
 
