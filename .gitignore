@@ -17,4 +17,10 @@ Thumbs.db
 # SentinelX generated outputs
 outputs/*.json
 outputs/*.html
-outputs/adb_results/
+state/*.json
+state/*.log
+state/*.out
+state/*.pid
+
+# Docker
+.dockerignore
