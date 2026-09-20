@@ -35,18 +35,36 @@ from modules.desktop_notify import notify as desktop_notify
 # Desktop OSINT
 from modules.phone_osint import analyze_phone_number, print_phone_report
 
-# Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Logger (level configured in main)
 logger = logging.getLogger("SentinelX")
 
 # Paths
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+
+def configure_logging(quiet=False, verbose=False):
+    """Configure logging level based on flags."""
+    if quiet:
+        level = logging.ERROR
+    elif verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.WARNING  # Default: only warnings + errors
+
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        force=True,
+    )
+    # Apply to all SentinelX sub-loggers
+    logging.getLogger("SentinelX").setLevel(level)
+
+    # Silence psutil warnings on Android
+    import warnings
+    warnings.filterwarnings("ignore", category=RuntimeWarning, module="psutil")
 
 
 def print_banner(env):
@@ -114,7 +132,7 @@ def run_triage_all(output_file="full_triage_report.json"):
         logger.warning("[!] Process triage unavailable")
         report_data["processes"] = {"error": "unavailable"}
 
-    # 2. Resources (NEW)
+    # 2. Resources
     logger.info("[*] Checking System Resources...")
     report_data["resources"] = run_resource_check()
     print_resource_report(report_data["resources"])
@@ -167,22 +185,36 @@ def main():
     )
     parser.add_argument("--triage-all", action="store_true", help="Run all modules")
     parser.add_argument("--process", action="store_true", help="Process analysis only")
-    parser.add_argument("--resources", action="store_true", help="Resource monitor (CPU/RAM/battery/thermal)")
+    parser.add_argument("--resources", action="store_true",
+                        help="Resource monitor (CPU/RAM/battery/thermal)")
     parser.add_argument("--network", action="store_true", help="Network analysis only")
     parser.add_argument("--files", action="store_true", help="File triage only")
     parser.add_argument("--persistence", action="store_true", help="Persistence check only")
     parser.add_argument("--android", action="store_true", help="Android OSINT only")
-    parser.add_argument("--android-network", action="store_true", help="Android network (Termux:API) only")
-    parser.add_argument("--spyware", action="store_true", help="Android spyware detection only")
+    parser.add_argument("--android-network", action="store_true",
+                        help="Android network (Termux:API) only")
+    parser.add_argument("--spyware", action="store_true",
+                        help="Android spyware detection only")
     parser.add_argument("--phone", type=str, default=None,
                         help="Analyze a phone number in E.164 format (e.g. +963912345678)")
-    parser.add_argument("--notify-test", action="store_true", help="Test notification system")
+    parser.add_argument("--notify-test", action="store_true",
+                        help="Test notification system")
     parser.add_argument("--env", action="store_true", help="Show environment info")
+
+    # Output controls
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="Suppress all logs (only show reports)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Show debug logs")
+
     parser.add_argument("--output", type=str, default="full_triage_report.json",
                         help="Output report filename")
     parser.add_argument("--version", action="version", version="SentinelX 1.1.0")
 
     args = parser.parse_args()
+
+    # Configure logging FIRST
+    configure_logging(quiet=args.quiet, verbose=args.verbose)
 
     env = get_environment()
     print_banner(env)
