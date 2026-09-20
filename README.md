@@ -57,6 +57,32 @@ Whether you're performing rapid incident response on a compromised endpoint, aud
 - **Structured JSON** output for automation and pipelines
 - **Rich HTML Dashboard** with dark theme, severity badges, and interactive tables (offline-capable, single-file)
 
+### 🔍 IOC Hunter (Malware Hash Detection)
+
+Detects known malware using SHA-256 hash signatures.
+
+**Data sources:**
+- **MalwareBazaar** — 1800+ recent malware samples (auto-updated)
+- **Local database** — user-defined hashes
+- **Built-in** — EICAR, WannaCry, NotPetya
+
+**Features:**
+- Works from geo-blocked regions (uses export files, not APIs)
+- 6-hour cache TTL for online hashes
+- 100MB file size limit (skips larger)
+- Duplicate detection via realpath
+
+**Usage:**
+```bash
+# Scan a single file
+python SentinelX.py --ioc ~/suspicious.exe
+
+# Scan a directory
+python SentinelX.py --ioc ~/Downloads
+
+# Automatic (runs as part of --triage-all)
+python SentinelX.py --triage-all
+
 ---
 
 ## 🎯 Why SentinelX?
