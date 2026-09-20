@@ -1,0 +1,67 @@
+name: Repository Health Check
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Repository stats
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Repository Health Check"
+          echo "════════════════════════════════════════"
+          echo ""
+          
+          echo "📁 Files:"
+          echo "  Total:      $(find . -type f -not -path './.git/*' | wc -l)"
+          echo "  Python:     $(find . -name '*.py' -not -path './.git/*' | wc -l)"
+          echo "  Markdown:   $(find . -name '*.md' -not -path './.git/*' | wc -l)"
+          echo "  YAML:       $(find . -name '*.yml' -o -name '*.yaml' | grep -v .git | wc -l)"
+          
+          echo ""
+          echo "📏 Lines of Code:"
+          TOTAL_LOC=$(find . -name '*.py' -not -path './.git/*' -exec cat {} \; | wc -l)
+          echo "  Python LOC: $TOTAL_LOC"
+          
+          echo ""
+          echo "📦 Modules:"
+          echo "  Count: $(find modules -name '*.py' -not -name '__init__.py' | wc -l)"
+          
+          echo ""
+          echo "🧪 Tests:"
+          echo "  Count: $(find tests -name 'test_*.py' | wc -l)"
+          
+          echo ""
+          echo "📅 Last commit:"
+          git log -1 --format='  %h - %s (%ar)'
+          
+          echo ""
+          echo "🌿 Current branch: $(git branch --show-current)"
+          
+          echo ""
+          echo "📊 Contributors:"
+          git log --format='%an' | sort -u | head -10 | sed 's/^/  - /'
+      
+      - name: Check for stale branches
+        run: |
+          echo ""
+          echo "🌿 Branches:"
+          git branch -r | grep -v HEAD | head -10 | sed 's/^/  /'
+      
+      - name: Check for large files
+        run: |
+          echo ""
+          echo "📦 Large files (>1MB):"
+          find . -type f -size +1M -not -path './.git/*' -exec ls -lh {} \; | awk '{print "  " $9 " (" $5 ")"}'
+      
+      - name: Check dependencies
+        run: |
+          echo ""
+          echo "📚 Dependencies:"
+          cat requirements.txt | grep -v '^#' | grep -v '^$' | sed 's/^/  - /'

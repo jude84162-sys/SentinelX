@@ -1,0 +1,397 @@
+name: Verify Repository
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      check_online:
+        description: 'Check online resources'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  verify-structure:
+    name: Verify Repository Structure
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Verify required files exist
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Checking required files"
+          echo "════════════════════════════════════════"
+          
+          REQUIRED_FILES=(
+            "README.md"
+            "LICENSE"
+            "SentinelX.py"
+            "requirements.txt"
+            "install.sh"
+            "pyproject.toml"
+            "Dockerfile"
+          )
+          
+          MISSING=0
+          
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ -f "$file" ]; then
+              echo "  ✓ $file"
+            else
+              echo "  ✗ $file — MISSING"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          
+          echo ""
+          
+          REQUIRED_DIRS=(
+            "modules"
+            "tests"
+            ".github/workflows"
+          )
+          
+          for dir in "${REQUIRED_DIRS[@]}"; do
+            if [ -d "$dir" ]; then
+              echo "  ✓ $dir/"
+            else
+              echo "  ✗ $dir/ — MISSING"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          
+          echo ""
+          
+          if [ $MISSING -gt 0 ]; then
+            echo "❌ $MISSING required files/dirs missing"
+            exit 1
+          fi
+          
+          echo "✅ All required files present"
+      
+      - name: Verify modules count
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Checking modules"
+          echo "════════════════════════════════════════"
+          
+          COUNT=$(find modules -name "*.py" -not -name "__init__.py" | wc -l)
+          echo "  Modules found: $COUNT"
+          
+          if [ "$COUNT" -lt 20 ]; then
+            echo "  ⚠ Expected at least 20 modules, got $COUNT"
+            exit 1
+          fi
+          
+          echo "  ✓ Module count OK"
+          
+          echo ""
+          echo "  Module list:"
+          find modules -name "*.py" -not -name "__init__.py" -exec basename {} \; | sort
+      
+      - name: Verify tests exist
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Checking tests"
+          echo "════════════════════════════════════════"
+          
+          TEST_COUNT=$(find tests -name "test_*.py" | wc -l)
+          echo "  Test files: $TEST_COUNT"
+          
+          if [ "$TEST_COUNT" -lt 3 ]; then
+            echo "  ⚠ Expected at least 3 test files, got $TEST_COUNT"
+            exit 1
+          fi
+          
+          echo "  ✓ Test count OK"
+      
+      - name: Check for required keywords in README
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Checking README content"
+          echo "════════════════════════════════════════"
+          
+          KEYWORDS=(
+            "SentinelX"
+            "Blue Team"
+            "Installation"
+            "Features"
+          )
+          
+          MISSING=0
+          
+          for keyword in "${KEYWORDS[@]}"; do
+            if grep -q "$keyword" README.md; then
+              echo "  ✓ Found: $keyword"
+            else
+              echo "  ✗ Missing keyword: $keyword"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          
+          if [ $MISSING -gt 0 ]; then
+            echo "⚠ $MISSING keywords missing (non-critical)"
+          fi
+
+  verify-imports:
+    name: Verify Python Imports
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install psutil phonenumbers requests
+      
+      - name: Test all imports
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Testing imports on Python ${{ matrix.python-version }}"
+          echo "════════════════════════════════════════"
+          
+          MODULES=(
+            "env_detect"
+            "process"
+            "network"
+            "files"
+            "persistence"
+            "resources"
+            "ioc_hunter"
+            "mitre_attack"
+            "cache_db"
+          )
+          
+          FAILED=0
+          
+          for module in "${MODULES[@]}"; do
+            if python -c "from modules.$module import *" 2>/dev/null; then
+              echo "  ✓ $module"
+            else
+              echo "  ✗ $module — IMPORT FAILED"
+              FAILED=$((FAILED + 1))
+            fi
+          done
+          
+          if [ $FAILED -gt 0 ]; then
+            echo "❌ $FAILED imports failed"
+            exit 1
+          fi
+          
+          echo "✅ All imports OK"
+      
+      - name: Test CLI entry
+        run: |
+          python SentinelX.py --version
+          python SentinelX.py --help | head -20
+      
+      - name: Verify version matches
+        run: |
+          FILE_VERSION=$(grep -oP 'VERSION = "\K[^"]+' SentinelX.py | head -1)
+          echo "  Version in SentinelX.py: $FILE_VERSION"
+          
+          PYPROJECT_VERSION=$(grep -oP 'version = "\K[^"]+' pyproject.toml | head -1)
+          echo "  Version in pyproject.toml: $PYPROJECT_VERSION"
+          
+          if [ "$FILE_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "⚠ Version mismatch!"
+            echo "   SentinelX.py: $FILE_VERSION"
+            echo "   pyproject.toml: $PYPROJECT_VERSION"
+            exit 1
+          fi
+          
+          echo "  ✓ Versions match"
+
+  verify-tests:
+    name: Verify Test Suite
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install psutil phonenumbers requests
+          pip install pytest
+      
+      - name: Run tests
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Running test suite"
+          echo "════════════════════════════════════════"
+          
+          pytest tests/ -v --tb=short
+      
+      - name: Test summary
+        if: always()
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Test Summary"
+          echo "════════════════════════════════════════"
+          pytest tests/ --tb=no -q 2>&1 | tail -3
+
+  verify-install-script:
+    name: Verify Install Script
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check install.sh syntax
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Verifying install.sh"
+          echo "════════════════════════════════════════"
+          
+          # Syntax check
+          bash -n install.sh
+          echo "  ✓ Bash syntax valid"
+          
+          # Check executable
+          if [ -x install.sh ]; then
+            echo "  ✓ install.sh is executable"
+          else
+            echo "  ⚠ install.sh not executable (fixing...)"
+            chmod +x install.sh
+          fi
+          
+          # Check content
+          for keyword in "termux" "linux" "macos" "sentinelx"; do
+            if grep -qi "$keyword" install.sh; then
+              echo "  ✓ Mentions: $keyword"
+            else
+              echo "  ⚠ Does not mention: $keyword"
+            fi
+          done
+      
+      - name: Test install.sh in sandbox
+        run: |
+          # Test with dry run
+          echo "  Testing install.sh --help"
+          bash install.sh --help | head -20
+      
+      - name: Verify shebang
+        run: |
+          FIRST_LINE=$(head -1 install.sh)
+          echo "  Shebang: $FIRST_LINE"
+          if [[ "$FIRST_LINE" == *"bash"* ]]; then
+            echo "  ✓ Uses bash"
+          else
+            echo "  ✗ Should use bash"
+            exit 1
+          fi
+
+  verify-online:
+    name: Verify Online Resources
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_online == 'true' || github.event_name == 'schedule'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check GitHub repo accessible
+        run: |
+          REPO="jude84162-sys/SentinelX"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://github.com/$REPO")
+          echo "  GitHub repo: HTTP $STATUS"
+          
+          if [ "$STATUS" != "200" ]; then
+            echo "  ✗ Repo not accessible"
+            exit 1
+          fi
+          echo "  ✓ Repo accessible"
+      
+      - name: Check PyPI (if published)
+        run: |
+          echo "  Checking PyPI..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/sentinelx/json")
+          echo "  PyPI: HTTP $STATUS"
+          
+          if [ "$STATUS" = "200" ]; then
+            echo "  ✓ Published on PyPI"
+          else
+            echo "  ⚠ Not on PyPI (skipping)"
+          fi
+      
+      - name: Check Docker Hub (if published)
+        run: |
+          echo "  Checking Docker Hub..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://hub.docker.com/v2/repositories/jude84162/sentinelx/")
+          echo "  Docker Hub: HTTP $STATUS"
+      
+      - name: Check IOC feeds
+        run: |
+          echo "  Checking abuse.ch feeds..."
+          
+          FEEDS=(
+            "https://bazaar.abuse.ch/export/txt/sha256/recent/"
+            "https://urlhaus.abuse.ch/downloads/text/"
+          )
+          
+          for feed in "${FEEDS[@]}"; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$feed")
+            NAME=$(echo "$feed" | sed 's|https://||' | cut -d'/' -f1)
+            
+            if [ "$STATUS" = "200" ]; then
+              echo "  ✓ $NAME (HTTP $STATUS)"
+            else
+              echo "  ⚠ $NAME (HTTP $STATUS)"
+            fi
+          done
+
+  summary:
+    name: Summary
+    needs: [verify-structure, verify-imports, verify-tests, verify-install-script]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Generate summary
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  Repository Verification Summary"
+          echo "════════════════════════════════════════"
+          echo ""
+          echo "  Repository: jude84162-sys/SentinelX"
+          echo "  Time: $(date -u)"
+          echo ""
+          echo "  Structure:     ${{ needs.verify-structure.result }}"
+          echo "  Imports:       ${{ needs.verify-imports.result }}"
+          echo "  Tests:         ${{ needs.verify-tests.result }}"
+          echo "  Install:       ${{ needs.verify-install-script.result }}"
+          echo ""
+          
+          if [[ "${{ needs.verify-structure.result }}" == "success" && \
+                "${{ needs.verify-imports.result }}" == "success" && \
+                "${{ needs.verify-tests.result }}" == "success" && \
+                "${{ needs.verify-install-script.result }}" == "success" ]]; then
+            echo "  ✅ Repository verified successfully!"
+            exit 0
+          else
+            echo "  ❌ Some checks failed"
+            exit 1
+          fi

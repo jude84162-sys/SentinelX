@@ -1,0 +1,52 @@
+name: Check Specific Files
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_path:
+        description: 'File path to check'
+        required: true
+        type: string
+      should_exist:
+        description: 'Should the file exist?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  check-file:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check file
+        run: |
+          FILE="${{ github.event.inputs.file_path }}"
+          SHOULD_EXIST="${{ github.event.inputs.should_exist }}"
+          
+          echo "Checking: $FILE"
+          echo "Should exist: $SHOULD_EXIST"
+          echo ""
+          
+          if [ -e "$FILE" ]; then
+            EXISTS="true"
+            echo "✓ File EXISTS"
+            echo "  Size: $(stat -c%s "$FILE" 2>/dev/null || stat -f%z "$FILE" 2>/dev/null) bytes"
+            echo "  Lines: $(wc -l < "$FILE" 2>/dev/null || echo 'N/A')"
+            echo "  MD5: $(md5sum "$FILE" 2>/dev/null | cut -d' ' -f1 || echo 'N/A')"
+          else
+            EXISTS="false"
+            echo "✗ File DOES NOT exist"
+          fi
+          
+          if [ "$EXISTS" != "$SHOULD_EXIST" ]; then
+            echo ""
+            echo "❌ Check FAILED"
+            exit 1
+          fi
+          
+          echo ""
+          echo "✅ Check PASSED"
