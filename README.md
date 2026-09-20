@@ -101,6 +101,14 @@ python SentinelX.py --triage-all
 
 ## 📦 Installation
 
+## 🚀 Quick Install
+
+**One-line install (recommended):**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/jude84162-sys/SentinelX/main/install.sh | bash
+source ~/.bashrc
+sentinelx --triage-all
 ### Prerequisites
 
 - **Python 3.8+**
